@@ -10862,7 +10862,7 @@ end
 
 -- EXO-55 physical-shield bash damage: experimental value-signature fallback.
 -- This is not an established AbilityWeapon -> DamageInfo link. Find EXACTLY one
--- record with the v1.1.4-known defaults, otherwise expose no editable fields.
+-- record with the expected Shield Bash defaults, otherwise expose no editable fields.
 -- Cache by parsed damage table to avoid repeated full-table scans while browsing.
 function MOD.breakthrough_shield_bash_damage()
     local t = tables[T_DAMAGE]
@@ -10956,7 +10956,7 @@ local function resolve(weapon)
                             local first = damage_rows(weapon, 'Shield Bash (experimental)', 'shield_bash_',
                                                       bash, 'Shield Bash', 9, true)
                             if first then
-                                first.note = 'Matched uniquely by v1.1.4 default damage signature; ability-to-damage link not verified.'
+                                first.note = 'Matched uniquely by the expected Shield Bash damage signature; ability-to-damage link not verified.'
                             end
                         end
                     end
