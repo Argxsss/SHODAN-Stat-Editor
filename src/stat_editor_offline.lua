@@ -10860,6 +10860,36 @@ KINDS[TYPES.seeking].silo_rows = function(weapon)
     return true
 end
 
+-- EXO-55 physical-shield bash damage: experimental value-signature fallback.
+-- This is not an established AbilityWeapon -> DamageInfo link. Find EXACTLY one
+-- record with the v1.1.4-known defaults, otherwise expose no editable fields.
+-- Cache by parsed damage table to avoid repeated full-table scans while browsing.
+local function breakthrough_shield_bash_damage()
+    local t = tables[T_DAMAGE]
+    if not t or not t.index or not t.copies or not t.copies[1] then return nil end
+    if t.breakthrough_bash_checked then return t.breakthrough_bash_offset end
+    local match, count = nil, 0
+    for _, off in pairs(t.index) do
+        local raw = api.read(t.copies[1] + HEADER_BYTES + off, 40)
+        if raw and #raw == 40 then
+            local damage, durable, ap = u32(raw, 4), u32(raw, 8), u32(raw, 12)
+            local demol, stagger, push = u32(raw, 28), u32(raw, 32), u32(raw, 36)
+            if damage == 500 and durable == 500 and (ap == 4 or ap == 5)
+               and stagger == 45 and push == 20 and (demol == 30 or demol == 40) then
+                count = count + 1
+                match = off
+                if count > 1 then break end
+            end
+        end
+    end
+    t.breakthrough_bash_checked = true
+    t.breakthrough_bash_offset = count == 1 and match or nil
+    if count ~= 1 then
+        log('EXO-55 shield bash: no unique matching damage record (' .. count .. ' matches); edit controls hidden')
+    end
+    return t.breakthrough_bash_offset
+end
+
 local function resolve(weapon)
     weapon.rows, weapon.by_id, weapon.aliases, weapon.backpack, weapon.mines, weapon.legacy = {}, {}, nil, nil, nil, nil
     weapon.swaps = nil
@@ -10935,36 +10965,6 @@ local function resolve(weapon)
         end
     end
     resolve_gun(weapon, weapon.key)
-end
-
--- EXO-55 physical-shield bash damage: experimental value-signature fallback.
--- This is not an established AbilityWeapon -> DamageInfo link. Find EXACTLY one
--- record with the v1.1.4-known defaults, otherwise expose no editable fields.
--- Cache by parsed damage table to avoid repeated full-table scans while browsing.
-local function breakthrough_shield_bash_damage()
-    local t = tables[T_DAMAGE]
-    if not t or not t.index or not t.copies or not t.copies[1] then return nil end
-    if t.breakthrough_bash_checked then return t.breakthrough_bash_offset end
-    local match, count = nil, 0
-    for _, off in pairs(t.index) do
-        local raw = api.read(t.copies[1] + HEADER_BYTES + off, 40)
-        if raw and #raw == 40 then
-            local damage, durable, ap = u32(raw, 4), u32(raw, 8), u32(raw, 12)
-            local demol, stagger, push = u32(raw, 28), u32(raw, 32), u32(raw, 36)
-            if damage == 500 and durable == 500 and (ap == 4 or ap == 5)
-               and stagger == 45 and push == 20 and (demol == 30 or demol == 40) then
-                count = count + 1
-                match = off
-                if count > 1 then break end
-            end
-        end
-    end
-    t.breakthrough_bash_checked = true
-    t.breakthrough_bash_offset = count == 1 and match or nil
-    if count ~= 1 then
-        log('EXO-55 shield bash: no unique matching damage record (' .. count .. ' matches); edit controls hidden')
-    end
-    return t.breakthrough_bash_offset
 end
 
 -- The shots a weapon fires besides its projectile, read as the game had them: a second ammo type
