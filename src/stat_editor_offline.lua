@@ -10919,12 +10919,52 @@ local function resolve(weapon)
                                 { part('shield_plate_health', TYPES.health, at + 520 + 552 + 232, 'u32', 10000000) }, 1, 1000000, 250, 1000)
                         add_row(weapon, 'Physical shield', 'shield_plate_armor', 'Shield plate armor', 'u32',
                                 { part('shield_plate_armor', TYPES.health, at + 520 + 552 + 216, 'u32', 100) }, 0, 10, 1, 1)
+                        -- Shield Bash is an attack; these DamageInfo fields are
+                        -- separate from physical plate HP and armor.
+                        local bash = breakthrough_shield_bash_damage()
+                        if bash then
+                            local first = damage_rows(weapon, 'Shield Bash (experimental)', 'shield_bash_',
+                                                      bash, 'Shield Bash', 9, true)
+                            if first then
+                                first.note = 'Matched uniquely by v1.1.4 default damage signature; ability-to-damage link not verified.'
+                            end
+                        end
                     end
                 end
             end
         end
     end
     resolve_gun(weapon, weapon.key)
+end
+
+-- EXO-55 physical-shield bash damage: experimental value-signature fallback.
+-- This is not an established AbilityWeapon -> DamageInfo link. Find EXACTLY one
+-- record with the v1.1.4-known defaults, otherwise expose no editable fields.
+-- Cache by parsed damage table to avoid repeated full-table scans while browsing.
+local function breakthrough_shield_bash_damage()
+    local t = tables[T_DAMAGE]
+    if not t or not t.index or not t.copies or not t.copies[1] then return nil end
+    if t.breakthrough_bash_checked then return t.breakthrough_bash_offset end
+    local match, count = nil, 0
+    for _, off in pairs(t.index) do
+        local raw = api.read(t.copies[1] + HEADER_BYTES + off, 40)
+        if raw and #raw == 40 then
+            local damage, durable, ap = u32(raw, 4), u32(raw, 8), u32(raw, 12)
+            local demol, stagger, push = u32(raw, 28), u32(raw, 32), u32(raw, 36)
+            if damage == 500 and durable == 500 and (ap == 4 or ap == 5)
+               and stagger == 45 and push == 20 and (demol == 30 or demol == 40) then
+                count = count + 1
+                match = off
+                if count > 1 then break end
+            end
+        end
+    end
+    t.breakthrough_bash_checked = true
+    t.breakthrough_bash_offset = count == 1 and match or nil
+    if count ~= 1 then
+        log('EXO-55 shield bash: no unique matching damage record (' .. count .. ' matches); edit controls hidden')
+    end
+    return t.breakthrough_bash_offset
 end
 
 -- The shots a weapon fires besides its projectile, read as the game had them: a second ammo type
