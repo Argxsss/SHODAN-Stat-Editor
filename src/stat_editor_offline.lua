@@ -10864,7 +10864,7 @@ end
 -- This is not an established AbilityWeapon -> DamageInfo link. Find EXACTLY one
 -- record with the v1.1.4-known defaults, otherwise expose no editable fields.
 -- Cache by parsed damage table to avoid repeated full-table scans while browsing.
-local function breakthrough_shield_bash_damage()
+function MOD.breakthrough_shield_bash_damage()
     local t = tables[T_DAMAGE]
     if not t or not t.index or not t.copies or not t.copies[1] then return nil end
     if t.breakthrough_bash_checked then return t.breakthrough_bash_offset end
@@ -10951,7 +10951,7 @@ local function resolve(weapon)
                                 { part('shield_plate_armor', TYPES.health, at + 520 + 552 + 216, 'u32', 100) }, 0, 10, 1, 1)
                         -- Shield Bash is an attack; these DamageInfo fields are
                         -- separate from physical plate HP and armor.
-                        local bash = breakthrough_shield_bash_damage()
+                        local bash = MOD.breakthrough_shield_bash_damage()
                         if bash then
                             local first = damage_rows(weapon, 'Shield Bash (experimental)', 'shield_bash_',
                                                       bash, 'Shield Bash', 9, true)
