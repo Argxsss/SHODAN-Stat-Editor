@@ -9011,6 +9011,9 @@ KINDS[TYPES.avatar].resolve = function(entry)
     local h = ht and ht.index[entry.key]
     if h then
         add_row(entry, 'Health', 'health', 'Health', 'u32', { part('health', TYPES.health, h, 'u32', 10000000) }, 1, 100000, 5, 25)
+        -- Native Helldiver HealthComponentData regeneration field (+4).
+        add_row(entry, 'Health', 'health_regen', 'Regeneration (health/s)', 'f32',
+                { part('health_regen', TYPES.health, h + 4, 'f32', 1000000) }, 0, 100, 1, 5)
         local top = ht.copies[1] + HEADER_BYTES
         for z = 0, 37 do
             local base = h + 520 + z * 552
@@ -10135,6 +10138,9 @@ end
 -- default zone's), then each damageable zone (38 of 552 bytes from +520; +96 name, 0: unused; +216 armor,
 -- +232 health, -1: none). Zones are named from MOD.vehicle_parts (by the name's hash), else numbered.
 -- twins: the same vehicle's other entities (the GATER's two), written along.
+-- Validated EXO weapon-arm health components; other vehicle mounts are left alone.
+MOD.exo_mounted = { ['EXO-45 Patriot Exosuit'] = true, ['EXO-49 Emancipator Exosuit'] = true,
+                    ['EXO-51 Lumberer Exosuit'] = true, ['EXO-55 Breakthrough Exosuit'] = true }
 KINDS[TYPES.vehicle].rows = function(entry, key, twins)
     local t = tables[TYPES.health]
     local at = t and t.index[key]
@@ -10154,6 +10160,31 @@ KINDS[TYPES.vehicle].rows = function(entry, key, twins)
     -- vehicles). Damaged parts heal; a destroyed one (a wheel) stays destroyed: that state is not in the file
     local regen_parts = parts('regen', 4, 'f32', 1000000)
     for _, p in ipairs(parts('regen_phase', 20, 'f32', 1000000)) do regen_parts[#regen_parts + 1] = p end
+    -- Share this vehicle's regeneration slider with its physical left/right arm
+    -- health components. Destroyed parts and shield-plate zones may not restore.
+    if MOD.exo_mounted[entry.name] then
+        local mt = tables[TYPES.mount]
+        local mounts = mt and mt.index[key]
+        local seen = {}
+        for m = 0, mounts and 4 or -1 do
+            local mbase = mt.copies[1] + HEADER_BYTES + mounts + m * 24
+            local label = peek4(mbase + 16)
+            if label == 0x7BDEC47B or label == 0x47775624 then
+                local lo, hi = peek4(mbase), peek4(mbase + 4)
+                local mountkey = lo and hi and hash_key(string.format('%08X%08X', hi, lo))
+                local arm = mountkey and t.index[mountkey]
+                if arm and arm ~= at and not seen[arm] then
+                    local hp = default_of(field_at(TYPES.health, arm, 'u32', 10000000))
+                    local armor = default_of(field_at(TYPES.health, arm + 280, 'u32', 100))
+                    if hp and hp > 0 and hp <= 1000000 and armor and armor <= 10 then
+                        seen[arm] = true
+                        regen_parts[#regen_parts + 1] = part('regen_arm_' .. m, TYPES.health, arm + 4, 'f32', 1000000)
+                        regen_parts[#regen_parts + 1] = part('regen_arm_phase_' .. m, TYPES.health, arm + 20, 'f32', 1000000)
+                    end
+                end
+            end
+        end
+    end
     local regen = add_row(entry, 'Vehicle', 'regen', 'Regeneration (health/s)', 'f32', regen_parts, 0, 100000, 5, 50)
     regen.note = 'damaged parts heal; destroyed parts stay destroyed'
     add_row(entry, 'Vehicle', 'regen_delay', 'Regeneration delay after damage (s)', 'f32',
@@ -10183,7 +10214,7 @@ KINDS[TYPES.vehicle].TITLES = {
     ['Bastion(tank)'] = 'TD-220 Bastion MK XVI', ['Storm(tank)'] = 'TD-110 Maelstrom',
     ['Fast Recon Vehicle (FRV)'] = 'M-102 Gunner FRV', ['Fast Recon Vehicle (Ramming Flamethrower)'] = 'M-104 Incinerator FRV',
     ['Fast Recon Vehicle (Resupply Auto Turret)'] = 'M-103 Supply FRV', ['Combat Walker Lumberer'] = 'EXO-51 Lumberer Exosuit',
-    ['Combat Walker Breakthrough'] = 'EXO-55 Breakthrough Exosuit', ['Combat Walker Emancipator'] = 'EXO-49 Emancipator Exosuit',
+    ['Combat Walker Breakthrough'] = 'EXO-55 Breakthrough Exosuit', ['Combat Walker Breacher'] = 'EXO-55 Breakthrough Exosuit', ['Combat Walker Emancipator'] = 'EXO-49 Emancipator Exosuit',
     ['Combat Walker Patriot'] = 'EXO-45 Patriot Exosuit' }
 KINDS[TYPES.vehicle].ENTITIES = { ['79E4B3D2DA5E45E3'] = 'EXO-45 Patriot Exosuit', ['C2D449ECF7FACAB1'] = 'EXO-49 Emancipator Exosuit' }
 -- vehicles no stratagem calls in (mission vehicles): { name, short name (its weapons'), its entities } (the GATER: two
@@ -10530,15 +10561,31 @@ function MOD.callin_rows(entry, defs)
                 'Ship upgrades that make support weapons and sentries launch at once skip it (tested).' }
 end
 
+-- EXO / Orbital Laser native mission-use limit (0 in UI = UINT32_MAX in data).
+-- Other stratagems and Eagle rearm pools retain their original finite editor.
+MOD.unlimited_uses = 4294967295
+MOD.unlimited_mission_targets = {
+    ['EXO-45 Patriot Exosuit'] = true, ['EXO-49 Emancipator Exosuit'] = true,
+    ['EXO-51 Lumberer Exosuit'] = true, ['EXO-55 Breakthrough Exosuit'] = true,
+    ['Orbital Laser'] = true
+}
 local function resolve_stratagem(entry)
     local s = entry.stratagem
     local def = s.def
     if def then
         add_row(entry, 'Stratagem', 'cooldown', 'Cooldown (s)', 'f32',
                 { part('cooldown', def.kind, def.off + 104, 'f32', 100000) }, 0, 10000, 1, 10)
-        if read_field(field_at(def.kind, def.off + 80, 'u32', 999)) then
-            add_row(entry, 'Stratagem', 'uses', s.family == 'eagle' and 'Uses per rearm' or 'Uses per mission', 'u32',
-                    { part('uses', def.kind, def.off + 80, 'u32', 999) }, 0, 999, 1, 5)
+        local can_unlimit = s.family ~= 'eagle' and MOD.unlimited_mission_targets[entry.name]
+        local uses_field = field_at(def.kind, def.off + 80, 'u32', can_unlimit and MOD.unlimited_uses or 999)
+        if can_unlimit then uses_field.limit = MOD.unlimited_uses end
+        if read_field(uses_field) then
+            local uses = add_row(entry, 'Stratagem', 'uses', can_unlimit and 'Uses (0 = unlimited)'
+                            or (s.family == 'eagle' and 'Uses per rearm' or 'Uses per mission'), 'u32',
+                            { part('uses', def.kind, def.off + 80, 'u32', can_unlimit and MOD.unlimited_uses or 999) }, 0, 999, 1, 5)
+            if can_unlimit then
+                uses.choice = 'mission_uses'
+                uses.note = '0 saves UINT32_MAX to the mission-use field; test in a new mission.'
+            end
         end
         if s.family ~= 'eagle' then MOD.callin_rows(entry, { def }) end
         if s.family ~= 'eagle' and MOD.extra.FAMILIES[s.family] then MOD.extra.row(entry, def) end
@@ -10846,6 +10893,36 @@ local function resolve(weapon)
         if weapon.sentry_defs[1] then MOD.callin_rows(weapon, weapon.sentry_defs) end
         if weapon.sentry_defs[1] then MOD.extra.row(weapon, weapon.sentry_defs[1]) end
         unit_rows(weapon, KINDS[TYPES.health].body(weapon.key) or weapon.key, weapon.name:find('^E/') and 'Emplacement' or 'Sentry', 'unit_')
+    end
+    -- Separate EXO mounted-arm durability and the Breakthrough physical shield.
+    local exo, arm_name = weapon.name:match('^(EXO%-%d%d .+): (.+)$')
+    if weapon.mounted and MOD.exo_mounted[exo] and (arm_name == 'Left arm' or arm_name == 'Right arm') then
+        local ht = tables[TYPES.health]
+        local at = ht and ht.index[weapon.key]
+        if at then
+            local hp = default_of(field_at(TYPES.health, at, 'u32', 10000000))
+            local armor = default_of(field_at(TYPES.health, at + 280, 'u32', 100))
+            if hp and hp > 0 and hp <= 1000000 and armor and armor <= 10 then
+                add_row(weapon, 'Arm durability', 'arm_health', 'Arm health', 'u32',
+                        { part('arm_health', TYPES.health, at, 'u32', 10000000) }, 1, 1000000, 50, 500)
+                add_row(weapon, 'Arm durability', 'arm_armor', 'Arm armor', 'u32',
+                        { part('arm_armor', TYPES.health, at + 280, 'u32', 100) }, 0, 10, 1, 1)
+                if exo == 'EXO-55 Breakthrough Exosuit' and arm_name == 'Left arm' then
+                    local shield_arm_armor = default_of(field_at(TYPES.health, at + 520 + 216, 'u32', 100))
+                    local plate_hp = default_of(field_at(TYPES.health, at + 520 + 552 + 232, 'u32', 10000000))
+                    local plate_armor = default_of(field_at(TYPES.health, at + 520 + 552 + 216, 'u32', 100))
+                    if shield_arm_armor and shield_arm_armor <= 10 and plate_hp and plate_hp > 0
+                       and plate_hp <= 1000000 and plate_armor and plate_armor <= 10 then
+                        add_row(weapon, 'Physical shield', 'shield_arm_armor', 'Shield arm zone armor', 'u32',
+                                { part('shield_arm_armor', TYPES.health, at + 520 + 216, 'u32', 100) }, 0, 10, 1, 1)
+                        add_row(weapon, 'Physical shield', 'shield_plate_health', 'Shield plate health', 'u32',
+                                { part('shield_plate_health', TYPES.health, at + 520 + 552 + 232, 'u32', 10000000) }, 1, 1000000, 250, 1000)
+                        add_row(weapon, 'Physical shield', 'shield_plate_armor', 'Shield plate armor', 'u32',
+                                { part('shield_plate_armor', TYPES.health, at + 520 + 552 + 216, 'u32', 100) }, 0, 10, 1, 1)
+                    end
+                end
+            end
+        end
     end
     resolve_gun(weapon, weapon.key)
 end
@@ -11284,6 +11361,10 @@ local function row_value(row, default)
     local get = default and default_of or read_field
     if row.choice == 'grenade' and not default and row.parts[1].field.pending_value ~= nil then
         return row.parts[1].field.pending_value
+    end
+    if row.choice == 'mission_uses' then
+        local native = get(row.parts[1].field)
+        return native == MOD.unlimited_uses and 0 or native
     end
     if row.choice or row.lead then return get(row.parts[1].field) end   -- lead: the others scale with it
     if row.span then
@@ -12239,6 +12320,18 @@ local function change(row, delta_sign, big, exact)
         return
     end
     if row.choice then
+        if row.choice == 'mission_uses' then
+            local selected = exact and math.floor(exact + 0.5)
+                            or math.max(0, math.min(999, current + delta_sign * (big and 5 or 1)))
+            selected = math.max(0, math.min(999, selected))
+            local native = selected == 0 and MOD.unlimited_uses or selected
+            local p = row.parts[1]
+            local ok, why = write_field(p.field, native)
+            if ok then set_override(weapon, p, unless_default(native, default_of(p.field)))
+            else ui.message = { text = why, till = api.now() + 4 } end
+            ui.version = ui.version + 1
+            return
+        end
         if row.choice == 'grenade' then
             local spec = KINDS[TYPES.throwable]
             local target = exact and math.floor(exact + 0.5) or spec.step(current, delta_sign * (big and 10 or 1))
